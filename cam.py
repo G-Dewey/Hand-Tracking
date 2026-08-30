@@ -1,7 +1,10 @@
 import config
 from debug import debug
+from state import gamestate
+import hand
 
 import cv2
+import mediapipe as mp
 from datetime import datetime
 from pathlib import Path
 
@@ -15,14 +18,19 @@ class Camera:
         self.cap = cv2.VideoCapture(camera_index)
         debug.log(f"Camera initialized with index: {camera_index}.")
 
+        # Initialize MediaPipe Hands
+        self.hands = mp.solutions.hands.Hands(
+            max_num_hands=config.MAX_HANDS,
+            min_detection_confidence=config.MIN_DETECTION_CONFIDENCE,
+            min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE
+        )
+        self.draw = mp.solutions.drawing_utils
+
     def __del__(self):
         # Release the webcam resource when the object is destroyed
         self.cap.release()
         cv2.destroyAllWindows()
         debug.log("Camera resource released.")
-
-    def color_space_conversion(self, frame):
-        return frame 
 
     def capture_frame(self):
         ret, frame = self.cap.read()
@@ -38,19 +46,44 @@ class Camera:
         else:
             debug.log("Failed to capture frame.")
 
-    def start_stream(self):
-        debug.log("Starting camera stream. Press 'q' to exit.")
+    def stream(self):
+        ret, frame = self.cap.read()
+        if not ret:
+            debug.log("Failed to read frame from camera.")
 
-        while self.cap.isOpened():
-            ret, frame = self.cap.read()
-            if not ret:
-                debug.log("Failed to read frame from camera.")
-                break
+        frame, hands = self.process_frame(frame)
+        cv2.imshow('Camera Stream', frame)
 
-            frame = self.color_space_conversion(frame)
-            cv2.imshow('Camera Stream', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            debug.log("Exiting camera stream.")
+            cv2.destroyAllWindows()
+            gamestate.running = False
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                debug.log("Exiting camera stream.")
-                cv2.destroyAllWindows()
-                break
+        return hands
+
+    def process_frame(self, frame):
+        frame = cv2.flip(frame, 1)
+        h, w, _ = frame.shape
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(rgb_frame)
+
+        hands = []
+
+        if results.multi_hand_landmarks:
+            border_color = (0, 255, 0)  # Green
+
+            # draw hand landmarks and create Hand objects
+            for index, hand_landmarks in enumerate(results.multi_hand_landmarks):
+                handedness = results.multi_handedness[index]
+                hand_obj = hand.Hand(hand_landmarks, handedness)
+                hands.append(hand_obj)
+
+                self.draw.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
+                debug.log("Hand landmarks drawn on frame.")
+        else:
+            border_color = (0, 0, 255)  # Red
+
+        # Draw border and text
+        cv2.rectangle(frame, (config.BORDER_PADDING, config.BORDER_PADDING), (w - config.BORDER_PADDING, h - config.BORDER_PADDING), border_color, 2)
+
+        return frame, hands
