@@ -1,6 +1,6 @@
 import config
 from debug import debug
-from state import gamestate
+from gamestate import gamestate
 import hand
 
 import cv2
@@ -25,6 +25,9 @@ class Camera:
             min_tracking_confidence=config.MIN_TRACKING_CONFIDENCE
         )
         self.draw = mp.solutions.drawing_utils
+
+        self.w = 0
+        self.h = 0
 
     def __del__(self):
         # Release the webcam resource when the object is destroyed
@@ -63,27 +66,42 @@ class Camera:
 
     def process_frame(self, frame):
         frame = cv2.flip(frame, 1)
-        h, w, _ = frame.shape
+        self.h, self.w, _ = frame.shape
+
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
 
         hands = []
 
         if results.multi_hand_landmarks:
-            border_color = (0, 255, 0)  # Green
-
             # draw hand landmarks and create Hand objects
             for index, hand_landmarks in enumerate(results.multi_hand_landmarks):
                 handedness = results.multi_handedness[index]
-                hand_obj = hand.Hand(hand_landmarks, handedness)
-                hands.append(hand_obj)
+                hand_obj = hand.Hand(hand_landmarks, handedness, self.w, self.h)
+
+                if self.check_in_border(hand_obj):
+                    hand_obj.set_in_border()
+                    hands.append(hand_obj)
 
                 self.draw.draw_landmarks(frame, hand_landmarks, mp.solutions.hands.HAND_CONNECTIONS)
-                debug.log("Hand landmarks drawn on frame.")
+
+        if len(hands) > 0:
+            border_color = (0, 255, 0)  # Green
         else:
             border_color = (0, 0, 255)  # Red
 
         # Draw border and text
-        cv2.rectangle(frame, (config.BORDER_PADDING, config.BORDER_PADDING), (w - config.BORDER_PADDING, h - config.BORDER_PADDING), border_color, 2)
+        cv2.rectangle(frame, (config.BORDER_PADDING, config.BORDER_PADDING), (self.w - config.BORDER_PADDING, self.h - config.BORDER_PADDING), border_color, 2)
 
         return frame, hands
+
+    def check_in_border(self, hand):
+        if (hand.x < config.BORDER_PADDING or hand.x > self.w - config.BORDER_PADDING):
+            return False
+        if (hand.y < config.BORDER_PADDING or hand.y > self.h - config.BORDER_PADDING):
+            return False
+        return True
+
+    # Used to get dimensions of the playzone for the game window
+    def get_playzone(self):
+        return (self.w - (2 *config.BORDER_PADDING)) * config.SCALE_FACTOR, (self.h - ( 2* config.BORDER_PADDING)) * config.SCALE_FACTOR
